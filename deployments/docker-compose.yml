@@ -1,0 +1,55 @@
+# Local stack: one Postgres shared by all services (like production, where
+# each service owns a schema), wallet-service built from ../sds_wallet, and
+# payment-service.
+name: sds_payment
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: sds
+      POSTGRES_PASSWORD: sds
+      POSTGRES_DB: sds
+    ports:
+      - "5434:5432" # 5434 on the host to avoid clashing with sds_wallet's 5433
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sds -d sds"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  wallet:
+    build:
+      context: ../../sds_wallet
+      dockerfile: deployments/wallet.Dockerfile
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: "postgres://sds:sds@db:5432/sds?sslmode=disable"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  payment:
+    build:
+      context: ..
+      dockerfile: deployments/payment.Dockerfile
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: "postgres://sds:sds@db:5432/sds?sslmode=disable"
+      DB_SCHEMA: "payment"
+      WALLET_URL: "http://wallet:8080"
+      BILL_TTL: "15m"
+    ports:
+      - "8081:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      wallet:
+        condition: service_started
+
+volumes:
+  db-data:
